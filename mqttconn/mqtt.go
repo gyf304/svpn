@@ -148,6 +148,11 @@ func (conn *mqttConn) RemoteAddr() net.Addr {
 	return mqttAddr(conn.url)
 }
 
+func (conn *mqttConn) Close() error {
+	conn.mqttClient.Disconnect(100)
+	return nil
+}
+
 type mqttAddr string
 
 func (addr mqttAddr) Network() string {

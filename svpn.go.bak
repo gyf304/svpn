@@ -1,0 +1,149 @@
+package svpn
+
+import (
+	"fmt"
+	"net"
+	"time"
+	"strings"
+	"github.com/pkg/errors"
+	"encoding/base64"
+)
+
+
+// Network act as a TUN remote and implements net.PacketConn
+type Network struct {
+	// PacketSize is the size limit of packets that the VPN can transmit
+	PacketSize       uint
+	// PublicAddr is the address for external network, can be dynamic, e.g. STUN
+	PublicAddr       net.Addr
+	// PrivateAddr is the network address for inside the network, should be static
+	PrivateAddr      net.Addr
+	// SignalBus is used for broadcasting presence and to negotiate address
+	SignalBus        net.Conn
+	// PacketConn is the underlying transport for packets
+	PacketConn       net.PacketConn
+
+	initialized             bool // race
+	privateAddrConfirmed    bool // race
+
+	// network address translation tables
+	publicAddrToPrivateAddr map[staticAddr]staticAddr
+	privateAddrToPublicAddr map[staticAddr]staticAddr
+}
+
+func (vpn *Network) handleCommand(cmd []string) {
+	if len(cmd) == 0 {
+		return
+	}
+	switch cmd[0] {
+	case "PROBE":
+		// reply with own association of ip addresses if any
+		if !vpn.privateAddrConfirmed {
+			break
+		}
+		privateAddrID := base64.StdEncoding.EncodeToString([]byte(
+			staticAddrFromAddr(vpn.PrivateAddr).ID(),
+		))
+		publicAddrID :=  base64.StdEncoding.EncodeToString([]byte(
+			staticAddrFromAddr(vpn.PublicAddr).ID(),
+		))
+		vpn.SignalBus.Write([]byte(fmt.Sprintf(
+			"ASSOC %s %s",
+			privateAddrID,
+			publicAddrID,
+		)))
+	case "ASSOC":
+		// ASSOC base64(192.168.8.123) base64(1.2.3.4:1234)
+		if len(cmd) < 3 {
+			return
+		}
+		privateAddrIDBytes, err := base64.StdEncoding.DecodeString(cmd[1])
+		if err != nil {
+			break
+		}
+		publiceAddrIDBytes, err := base64.StdEncoding.DecodeString(cmd[2])
+		if err != nil {
+			break
+		}
+		vpn.publicAddrToPrivateAddr[staticAddr(publiceAddrIDBytes)] = staticAddr(privateAddrIDBytes)
+		vpn.privateAddrToPublicAddr[staticAddr(privateAddrIDBytes)] = staticAddr(publiceAddrIDBytes)
+	case "DISAC":
+		// DISAC base64(192.168.8.123)
+		if len(cmd) < 2 {
+			return
+		}
+		privateAddrIDBytes, err := base64.StdEncoding.DecodeString(cmd[1])
+		if err != nil {
+			break
+		}
+		delete(vpn.privateAddrToPublicAddr, staticAddr(privateAddrIDBytes))
+	}
+}
+
+// Initialize initializes the VPN
+func (vpn *Network) Initialize() error {
+	if vpn.initialized {
+		return errors.New("already initialized")
+	}
+	vpn.initialized = true
+	vpn.publicAddrToPrivateAddr = make(map[staticAddr]staticAddr)
+	vpn.privateAddrToPublicAddr = make(map[staticAddr]staticAddr)
+	// set up bus listener
+	go func() {
+		b := make([]byte, 4096)
+		for {
+			n, err := vpn.SignalBus.Read(b)
+			if err != nil {
+				return
+			}
+			s := string(b[:n])
+			vpn.handleCommand(strings.Split(s, " "))
+		}
+	}()
+	// send probe request on bus to determine neighbors
+	vpn.SignalBus.Write([]byte("PROBE"))
+	// wait 3 seconds for client discovery
+	time.Sleep(3 * time.Second)
+	// check if addr is occupied
+	_, occupied := vpn.privateAddrToPublicAddr[staticAddrFromAddr(vpn.PrivateAddr)]
+	if occupied {
+		return errors.New("address is already occupied")
+	}
+	vpn.privateAddrConfirmed = true
+	// periodically send assoc
+	go func() {
+		var err error
+		for {
+			if vpn.privateAddrConfirmed {
+				_, err = vpn.SignalBus.Write([]byte(fmt.Sprintf(
+					"ASSOC %s %s",
+					vpn.PrivateAddr.String(),
+					vpn.PublicAddr.String(),
+				)))
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	return nil
+}
+
+// ReadFrom : See PacketConn.ReadFrom
+func (vpn *Network) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
+	n, addr, err = vpn.PacketConn.ReadFrom(p)
+	// do address translation
+	privateAddr, ok := vpn.publicAddrToPrivateAddr[staticAddrFromAddr(vpn.PrivateAddr)]
+	if !ok {
+		return n, addr, err
+	}
+	return n, privateAddr, err
+}
+
+func (vpn *Network) WriteTo(p []byte, addr net.Addr) (n int, err error) {
+	publicAddr, ok := vpn.privateAddrToPublicAddr[staticAddrFromAddr(addr)]
+	if !ok {
+		return 0, errors.New("address not mapped")
+	}
+}
+
