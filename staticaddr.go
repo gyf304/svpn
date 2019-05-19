@@ -6,9 +6,11 @@ import (
 )
 
 type StaticAddr struct {
-	NetworkValue string
-	StringValue  string
+	NetworkValue string `json:"network"`
+	StringValue  string `json:"string"`
 }
+
+type staticAddr StaticAddr
 
 func (addr *StaticAddr) Network() string {
 	if addr == nil {
@@ -29,7 +31,13 @@ func (addr *StaticAddr) MarshallText() (text []byte, err error) {
 }
 
 func (addr *StaticAddr) UnmarshalText(text []byte) error {
-	return json.Unmarshal(text, addr)
+	var xAddr staticAddr
+	err := json.Unmarshal(text, &xAddr)
+	if err != nil {
+		return err
+	}
+	*addr = StaticAddr(xAddr)
+	return nil
 }
 
 func StaticAddrFromAddr(addr net.Addr) *StaticAddr {

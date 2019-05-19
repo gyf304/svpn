@@ -47,5 +47,25 @@ func (c *TUNPacketConn) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
 }
 
 func (c *TUNPacketConn) WriteTo(p []byte, addr net.Addr) (n int, err error) {
-
+	if c.Interface.IsTAP() {
+		// Not implemented
+		return c.Write(p)
+	} else {
+		// IPv4 dst rewrite
+		ip := net.ParseIP(addr.String())
+		if ip.To4() != nil {
+			ip = ip.To4()
+			h, err := ipv4.ParseHeader(p[:n])
+			h.Dst = ip
+			if err == nil && h != nil {
+				hb, err := h.Marshal()
+				if err == nil {
+					copy(p, hb)
+				}
+			}
+		} else if ip.To16() != nil {
+			// IPv6 dst rewrite not implemented
+		}
+	}
+	return c.Write(p)
 }

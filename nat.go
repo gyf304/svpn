@@ -5,6 +5,12 @@ import (
 	"sync"
 )
 
+// NATEntry 
+type NATEntry struct {
+	Src net.Addr
+	Dst net.Addr
+}
+
 // NAT is a many-to-many network address translator
 type NAT interface {
 	// PublicAddrToPrivateAddrs translate a net.Addr to a list of net.Addr
@@ -20,13 +26,14 @@ type NATPacketConn struct {
 	net.PacketConn
 	NAT NAT
 	
+	pendingReadFromSrc   net.Addr
 	pendingReadFromBuf   []byte
 	pendingReadFromAddrs []net.Addr
 	pendingReadFromMutex sync.Mutex
 }
 
-// ReadFrom : See PacketConn.ReadFrom
-func (c *NATPacketConn) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
+// ReadFromNAT is identical to ReadFrom but returns *NATAddr instead of net.Addr
+func (c *NATPacketConn) ReadFromNAT(p []byte) (n int, naddr *NATAddr, err error) {
 	// first check if theres multicast pending, if yes, read remaining such packets
 	c.pendingReadFromMutex.Lock()
 	if len(c.pendingReadFromAddrs) > 0 {
@@ -34,11 +41,11 @@ func (c *NATPacketConn) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
 		c.pendingReadFromAddrs = c.pendingReadFromAddrs[1:]
 		c.pendingReadFromMutex.Unlock()
 		n = copy(p, c.pendingReadFromBuf)
-		return n, privateAddr, nil
+		return n, &NATAddr{privateAddr, c.pendingReadFromSrc}, nil
 	}
 	c.pendingReadFromMutex.Unlock()
 	// do actual read if there's no pending packets
-	n, addr, err = c.PacketConn.ReadFrom(p)
+	n, addr, err := c.PacketConn.ReadFrom(p)
 	// do address translation
 	privateAddrs := c.NAT.PublicAddrToPrivateAddrs(addr)
 	if len(privateAddrs) == 0 {
@@ -47,9 +54,15 @@ func (c *NATPacketConn) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
 	if len(privateAddrs) > 1 {
 		c.pendingReadFromMutex.Lock()
 		c.pendingReadFromAddrs = privateAddrs[1:]
+		c.pendingReadFromSrc = addr
 		c.pendingReadFromMutex.Unlock()
 	}
-	return n, privateAddrs[0], err
+	return n, &NATAddr{privateAddrs[0], addr}, err
+}
+
+// ReadFrom : See PacketConn.ReadFrom
+func (c *NATPacketConn) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
+	return c.ReadFromNAT(p)
 }
 
 // WriteTo : See PacketConn.WriteTo, this never fails
@@ -61,6 +74,7 @@ func (c *NATPacketConn) WriteTo(p []byte, addr net.Addr) (n int, err error) {
 	return len(p), nil
 }
 
+// NATAddr expands net.Addr by including a Src
 type NATAddr struct {
 	net.Addr
 	Src net.Addr

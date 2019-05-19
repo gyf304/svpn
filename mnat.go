@@ -71,8 +71,8 @@ func (mNAT *ManagedNAT) addMapping(sPrivateAddr StaticAddr, sPublicAddr StaticAd
 	if !ok {
 		mNAT.privateToPublic[sPrivateAddr] = make(map[StaticAddr]bool)
 	}
-	mNAT.privateToPublic[sPrivateAddr][sPublicAddr] = false
-	mNAT.publicToPrivate[sPublicAddr][sPrivateAddr] = false
+	mNAT.privateToPublic[sPrivateAddr][sPublicAddr] = mNAT.privateToPublic[sPrivateAddr][sPublicAddr] || false
+	mNAT.publicToPrivate[sPublicAddr][sPrivateAddr] = mNAT.privateToPublic[sPrivateAddr][sPublicAddr] || false
 }
 
 // AddMapping adds binding for privateAddr <-> publicAddr
@@ -218,13 +218,17 @@ func (mNAT *ManagedNAT) handleCommand(cmd ...string) {
 		privateAddrBytes, err1 := base64.StdEncoding.DecodeString(cmd[1])
 		publicAddrBytes, err2  := base64.StdEncoding.DecodeString(cmd[2])
 		if err1 != nil || err2 != nil {
+			fmt.Println(err1, err2)
 			break
 		}
+		fmt.Println(string(privateAddrBytes), string(publicAddrBytes))
 		privateAddr := StaticAddr{}
 		publicAddr  := StaticAddr{}
-		err1 = privateAddr.UnmarshalText(privateAddrBytes)
-		err2 = publicAddr.UnmarshalText(publicAddrBytes)
+		err1 = (&privateAddr).UnmarshalText(privateAddrBytes)
+		err2 = (&publicAddr).UnmarshalText(publicAddrBytes)
+		fmt.Println(privateAddr, publicAddr)
 		if err1 != nil || err2 != nil {
+			fmt.Println(err1, err2)
 			break
 		}
 		if cmd[0] == "ASSOC" {
@@ -233,4 +237,31 @@ func (mNAT *ManagedNAT) handleCommand(cmd ...string) {
 			mNAT.DropMapping(&privateAddr, &publicAddr)
 		}
 	}
+}
+
+func (mNAT *ManagedNAT) getMapping(dir bool) []NATEntry {
+	mNAT.mapLock.RLock()
+	defer mNAT.mapLock.RUnlock()
+	if mNAT.privateToPublic == nil {
+		return make([]NATEntry, 0)
+	}
+	entries := make([]NATEntry, 0, len(mNAT.privateToPublic) * 2)
+	for privateAddr, publicAddrs := range mNAT.privateToPublic {
+		for publicAddr := range publicAddrs {
+			if dir {
+				entries = append(entries, NATEntry{Src: &publicAddr, Dst: &privateAddr})
+			} else {
+				entries = append(entries, NATEntry{Src: &privateAddr, Dst: &publicAddr})
+			}
+		}
+	}
+	return entries
+}
+
+func (mNAT *ManagedNAT) GetOutboundMapping() []NATEntry {
+	return mNAT.getMapping(false)
+}
+
+func (mNAT *ManagedNAT) GetInboundMapping() []NATEntry {
+	return mNAT.getMapping(true)
 }
