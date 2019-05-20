@@ -152,43 +152,49 @@ func (mNAT *ManagedNAT) UnpinMapping(privateAddr net.Addr, publicAddr net.Addr) 
 }
 
 func (mNAT *ManagedNAT) PublicAddrToPrivateAddrs(addr net.Addr) []net.Addr {
-	mNAT.mapLock.Lock()
-	defer mNAT.mapLock.Unlock()
-	if mNAT.publicToPrivate == nil {
-		if mNAT.FallbackNAT != nil {
-			return mNAT.FallbackNAT.PublicAddrToPrivateAddrs(addr)
+	if mNAT.OverrideNAT != nil {
+		override := mNAT.OverrideNAT.PublicAddrToPrivateAddrs(addr)
+		if override != nil {
+			return override
 		}
-		return nil
 	}
-	addrs, ok := mNAT.publicToPrivate[*StaticAddrFromAddr(addr)]
-	if !ok {
-		if mNAT.FallbackNAT != nil {
-			return mNAT.FallbackNAT.PublicAddrToPrivateAddrs(addr)
+	if mNAT.publicToPrivate != nil {
+		mNAT.mapLock.RLock()
+		defer mNAT.mapLock.RUnlock()
+		addrs := mNAT.publicToPrivate[*StaticAddrFromAddr(addr)]
+		addrsSlice := make([]net.Addr, 0, len(addrs))
+		for k := range addrs {
+			addrsSlice = append(addrsSlice, &k)
 		}
-		return nil
+		return addrsSlice
 	}
-	addrsSlice := make([]net.Addr, 0, len(addrs))
-	for k := range addrs {
-		addrsSlice = append(addrsSlice, &k)
+	if mNAT.FallbackNAT != nil {
+		return mNAT.FallbackNAT.PrivateAddrToPublicAddrs(addr)
 	}
-	return addrsSlice
+	return nil
 }
 
 func (mNAT *ManagedNAT) PrivateAddrToPublicAddrs(addr net.Addr) []net.Addr {
-	mNAT.mapLock.RLock()
-	defer mNAT.mapLock.RUnlock()
-	if mNAT.privateToPublic == nil {
-		return nil
+	if mNAT.OverrideNAT != nil {
+		override := mNAT.OverrideNAT.PrivateAddrToPublicAddrs(addr)
+		if override != nil {
+			return override
+		}
 	}
-	addrs, ok := mNAT.privateToPublic[*StaticAddrFromAddr(addr)]
-	if !ok {
-		return nil
+	if mNAT.privateToPublic != nil {
+		mNAT.mapLock.RLock()
+		defer mNAT.mapLock.RUnlock()
+		addrs := mNAT.privateToPublic[*StaticAddrFromAddr(addr)]
+		addrsSlice := make([]net.Addr, 0, len(addrs))
+		for k := range addrs {
+			addrsSlice = append(addrsSlice, &k)
+		}
+		return addrsSlice
 	}
-	addrsSlice := make([]net.Addr, 0, len(addrs))
-	for k := range addrs {
-		addrsSlice = append(addrsSlice, &k)
+	if mNAT.FallbackNAT != nil {
+		return mNAT.FallbackNAT.PrivateAddrToPublicAddrs(addr)
 	}
-	return addrsSlice
+	return nil
 }
 
 func (mNAT *ManagedNAT) handleCommand(cmd ...string) {
