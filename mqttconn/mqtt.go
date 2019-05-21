@@ -1,14 +1,15 @@
 package mqttconn
 
 import (
-	"github.com/eclipse/paho.mqtt.golang"
-	"github.com/google/uuid"
-	"github.com/pkg/errors"
-	"time"
 	"fmt"
 	"net"
 	"net/url"
 	"strings"
+	"time"
+
+	mqtt "github.com/eclipse/paho.mqtt.golang"
+	"github.com/google/uuid"
+	"github.com/pkg/errors"
 )
 
 type mqttConn struct {
@@ -52,7 +53,7 @@ func CreateMQTTConnFromURL(uri string) (conn *mqttConn, err error) {
 		return nil, err
 	}
 	opts.SetClientID(id.String())
-	if (user != nil) {
+	if user != nil {
 		opts.SetUsername(user.Username())
 		password, passwordSet := user.Password()
 		if passwordSet {
@@ -82,13 +83,13 @@ func CreateMQTTConn(mqttClient mqtt.Client, topic string) (conn *mqttConn, err e
 	})
 	return &mqttConn{
 		mqttClient: mqttClient,
-		mqttTopic: topic,
-		readChan: readChan,
+		mqttTopic:  topic,
+		readChan:   readChan,
 	}, nil
 }
 
 func (conn *mqttConn) Write(p []byte) (n int, err error) {
-	token := conn.mqttClient.Publish(conn.mqttTopic, 0, false, p);
+	token := conn.mqttClient.Publish(conn.mqttTopic, 0, false, p)
 	if conn.writeDeadline.IsZero() {
 		token.Wait()
 	} else {
@@ -106,12 +107,12 @@ func (conn *mqttConn) Write(p []byte) (n int, err error) {
 }
 
 func (conn *mqttConn) Read(p []byte) (n int, err error) {
-	if conn.writeDeadline.IsZero() {
+	if conn.readDeadline.IsZero() {
 		bytes := <-conn.readChan
 		copiedCount := copy(p, bytes)
 		return copiedCount, nil
 	}
-	waitTime := conn.writeDeadline.Sub(time.Now())
+	waitTime := conn.readDeadline.Sub(time.Now())
 	if waitTime <= 0 {
 		return 0, &mqttConnError{true, errors.New("read timed out")}
 	}
@@ -165,7 +166,7 @@ func (addr mqttAddr) String() string {
 
 type mqttConnError struct {
 	isTimeout bool
-	err error
+	err       error
 }
 
 func (err *mqttConnError) Timeout() bool {

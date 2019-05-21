@@ -5,7 +5,8 @@ import (
 	"sync"
 )
 
-// NATEntry 
+// NATEntry represents one entry in a NAT table
+// Note that the entry is not just limited to IPv4 <-> IPv4
 type NATEntry struct {
 	Src net.Addr
 	Dst net.Addr
@@ -25,7 +26,7 @@ type NATPacketConn struct {
 	// PacketConn is the underlying transport for packets
 	net.PacketConn
 	NAT NAT
-	
+
 	pendingReadFromSrc   net.Addr
 	pendingReadFromBuf   []byte
 	pendingReadFromAddrs []net.Addr

@@ -1,45 +1,49 @@
 package svpn
 
 import (
-	"net"
 	"encoding/json"
+	"net"
 )
 
-type StaticAddr struct {
+// staticAddr is a implementation of net.Addr
+type _staticAddr struct {
 	NetworkValue string `json:"network"`
 	StringValue  string `json:"string"`
 }
 
-type staticAddr StaticAddr
+type staticAddr _staticAddr
 
-func (addr *StaticAddr) Network() string {
+func (addr *staticAddr) Network() string {
 	if addr == nil {
 		return ""
 	}
 	return addr.NetworkValue
 }
 
-func (addr *StaticAddr) String() string {
+func (addr *staticAddr) String() string {
 	if addr == nil {
 		return ""
 	}
 	return addr.StringValue
 }
 
-func (addr *StaticAddr) MarshallText() (text []byte, err error) {
-	return json.Marshal(addr)
+// MarshalText marshalls text into json
+func (addr *staticAddr) MarshalText() (text []byte, err error) {
+	return json.Marshal((*_staticAddr)(addr))
 }
 
-func (addr *StaticAddr) UnmarshalText(text []byte) error {
-	var xAddr staticAddr
+// UnmarshalText unmarshalls text from json
+func (addr *staticAddr) UnmarshalText(text []byte) error {
+	var xAddr _staticAddr
 	err := json.Unmarshal(text, &xAddr)
 	if err != nil {
 		return err
 	}
-	*addr = StaticAddr(xAddr)
+	*addr = staticAddr(xAddr)
 	return nil
 }
 
-func StaticAddrFromAddr(addr net.Addr) *StaticAddr {
-	return &StaticAddr{addr.Network(), addr.String()}
+// staticAddrFromAddr creates staticAddr from any net.Addr
+func staticAddrFromAddr(addr net.Addr) *staticAddr {
+	return &staticAddr{addr.Network(), addr.String()}
 }

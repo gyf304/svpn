@@ -1,19 +1,21 @@
 package svpn
 
 import (
-	"net"
-	"github.com/gortc/stun"
 	"fmt"
+	"net"
 	"time"
+
+	"github.com/gortc/stun"
 )
 
 // STUNUDP is a udp connection, but LocalAddr is now a Public Internet Address
 type STUNUDP struct {
 	*net.UDPConn
-	StunServerAddr  *net.UDPAddr
+	StunServerAddr    *net.UDPAddr
+	KeepAliveInterval time.Duration
 
-	tickerStop      chan struct{}
-	cachedAddr      *stunUDPAddr
+	tickerStop chan struct{}
+	cachedAddr *staticAddr
 }
 
 // PublicAddr returns STUN address
@@ -21,22 +23,47 @@ func (c *STUNUDP) PublicAddr() net.Addr {
 	return c.cachedAddr
 }
 
-func (c *STUNUDP) PublicAddrProxy() net.Addr {
-	return (*stunUDPAddrProxy)(c)
+// Start
+func (c *STUNUDP) Start() error {
+	// set up sender
+	if c.tickerStop != nil {
+		close(c.tickerStop)
+	}
+	if c.KeepAliveInterval >= 0 {
+		if c.KeepAliveInterval <= 10*time.Second {
+			c.KeepAliveInterval = 10 * time.Second
+		}
+		c.tickerStop = make(chan struct{})
+		ticker := time.NewTicker(c.KeepAliveInterval)
+		go func() {
+			message := stun.MustBuild(stun.TransactionID, stun.BindingRequest)
+			_, err := c.UDPConn.WriteToUDP(message.Raw, c.StunServerAddr)
+			for {
+				select {
+				case <-ticker.C:
+					message = stun.MustBuild(stun.TransactionID, stun.BindingRequest)
+					c.SetWriteDeadline(time.Now().Add(1 * time.Second))
+					_, err = c.UDPConn.WriteToUDP(message.Raw, c.StunServerAddr)
+					if err != nil {
+						fmt.Println(err)
+					}
+				case <-c.tickerStop:
+					ticker.Stop()
+					return
+				}
+			}
+		}()
+	}
+	_, _, err := c.ReadFromUDP(make([]byte, 4096))
+	return err
 }
 
-func (c *STUNUDP) Initialize(keepAliveInterval time.Duration) error {
-	c.SetKeepAliveInterval(keepAliveInterval)
-	b := make([]byte, 4096)
-	for {
-		_, _, err := c.ReadFromUDP(b)
-		if err != nil {
-			return err
-		}
-		if c.cachedAddr != nil {
-			return nil
-		}
+// Stop stops everything
+func (c *STUNUDP) Stop() error {
+	if c.tickerStop != nil {
+		close(c.tickerStop)
 	}
+	return nil
 }
 
 func (c *STUNUDP) ReadFromUDP(b []byte) (n int, addr *net.UDPAddr, err error) {
@@ -58,7 +85,7 @@ func (c *STUNUDP) ReadFromUDP(b []byte) (n int, addr *net.UDPAddr, err error) {
 		xorAddr := stun.XORMappedAddress{}
 		err = xorAddr.GetFrom(&stunMessage)
 		if err == nil {
-			c.cachedAddr = &stunUDPAddr{xorAddr.String()}
+			c.cachedAddr = &staticAddr{NetworkValue: "udp", StringValue: xorAddr.String()}
 		}
 	}
 	if len(tmpB) > 0 {
@@ -74,60 +101,4 @@ func (c *STUNUDP) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
 func (c *STUNUDP) Read(b []byte) (n int, err error) {
 	n, _, err = c.ReadFrom(b)
 	return n, err
-}
-
-// SetKeepAliveInterval keeps the UDP mapping alive
-func (c *STUNUDP) SetKeepAliveInterval(d time.Duration) {
-	// set up sender
-	if c.tickerStop != nil {
-		close(c.tickerStop)
-	}
-	if d <= 0 {
-		return
-	}
-	c.tickerStop = make(chan struct{})
-	ticker := time.NewTicker(d)
-	go func() {
-		message := stun.MustBuild(stun.TransactionID, stun.BindingRequest)
-		_, err := c.UDPConn.WriteToUDP(message.Raw, c.StunServerAddr)
-		for {
-			select {
-			case <- ticker.C:
-				message = stun.MustBuild(stun.TransactionID, stun.BindingRequest)
-				_, err = c.UDPConn.WriteToUDP(message.Raw, c.StunServerAddr)
-				if err != nil {
-					fmt.Println(err)
-				}
-			case <- c.tickerStop:
-				ticker.Stop()
-				return
-			}
-		}
-	}()
-	// set up receiver
-}
-
-type stunUDPAddr struct {
-	addr string
-}
-
-func (addr *stunUDPAddr) Network() string {
-	return "udp"
-}
-
-func (addr *stunUDPAddr) String() string {
-	if addr == nil {
-		return ""
-	}
-	return addr.addr
-}
-
-type stunUDPAddrProxy STUNUDP
-
-func (addr *stunUDPAddrProxy) Network() string {
-	return "udp"
-}
-
-func (addr *stunUDPAddrProxy) String() string {
-	return (*STUNUDP)(addr).cachedAddr.String()
 }

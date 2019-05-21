@@ -1,44 +1,57 @@
 package main
 
 import (
-	"time"
 	"fmt"
 	"net"
+	"os"
+	"os/signal"
+	"time"
+
 	"github.com/gyf304/svpn"
 	"github.com/gyf304/svpn/mqttconn"
+	"github.com/songgao/water"
 )
 
-type ipv4ManagedNATOverride struct {
-	IPNet           net.IPNet
-	MNAT            svpn.ManagedNAT
+type ethAddr struct {
+	net.HardwareAddr
 }
 
-func (ov *ipv4ManagedNATOverride) PublicAddrToPrivateAddrs(net.Addr) []net.Addr {
-	return nil // don't override ingress address
+func (ethAddr) Network() string {
+	return "eth"
 }
 
-func (ov *ipv4ManagedNATOverride) PrivateAddrToPublicAddrs(net.Addr) []net.Addr {
-	return nil
+func parseMAC(s string) ethAddr {
+	hardwareAddr, err := net.ParseMAC("FF:FF:FF:FF:FF:FF")
+	if err != nil {
+		panic(err)
+	}
+	return ethAddr{hardwareAddr}
 }
 
 func main() {
 	// initialize STUN udp
 	ln, err := net.ListenUDP("udp4", &net.UDPAddr{})
-	if (err != nil) {
+	if err != nil {
 		panic(err)
 	}
 	udpAddr, err := net.ResolveUDPAddr("udp4", "stun1.l.google.com:19302")
-	if (err != nil) {
+	if err != nil {
 		panic(err)
 	}
 	fmt.Println(udpAddr)
 	stunLn := &svpn.STUNUDP{
-		UDPConn: ln,
+		UDPConn:        ln,
 		StunServerAddr: udpAddr,
 	}
-	stunLn.Initialize(10 * time.Second)
-	// yo
-	fmt.Println("IPAddr Remote: ", stunLn.PublicAddr())
+	stunLn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	stunLn.Start()
+	stunLn.SetReadDeadline(time.Time{})
+	publicAddr := stunLn.PublicAddr()
+	if publicAddr == nil {
+		panic("cannot obtain public addr")
+	}
+
+	fmt.Println("IPAddr Remote: ", publicAddr)
 	// initialize signalBus
 	uri := "mqtt://broker.hivemq.com/test/room1234"
 	signalBus, err := mqttconn.CreateMQTTConnFromURL(uri)
@@ -49,11 +62,33 @@ func main() {
 	mNAT := &svpn.ManagedNAT{SignalBus: signalBus}
 	// initial probe on ManagedNAT
 	mNAT.Start()
-	// wait 2 seconds to settle down
-	time.Sleep(2 * time.Second)
-	mNAT.PinMapping(&net.IPAddr{net.IPv4(192, 168, 8, 9), ""}, stunLn.PublicAddr())
-	for {
-		time.Sleep(5 * time.Second)
-		fmt.Println(mNAT.GetOutboundMapping())
+	// wait 3 seconds to settle down
+	time.Sleep(3 * time.Second)
+	mNAT.PinMapping(parseMAC("ff:ff:ff:ff:ff:ff"), publicAddr)
+	// start up TAP
+	tunTapConfig := water.Config{
+		DeviceType: water.TAP,
+		PlatformSpecificParams: {}
 	}
+	signalChan := make(chan os.Signal)
+	workerStopped := make(chan struct{})
+	signal.Notify(signalChan, os.Interrupt)
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer close(workerStopped)
+		for {
+			select {
+			case <-ticker.C:
+				fmt.Println(mNAT.GetOutboundMapping())
+			case <-signalChan:
+				ticker.Stop()
+				fmt.Println("exit")
+				return
+			}
+		}
+	}()
+	fmt.Println("waiting")
+	<-workerStopped
+	fmt.Println("stopping")
+	mNAT.Stop()
 }

@@ -2,8 +2,9 @@ package svpn
 
 import (
 	"net"
-	"github.com/songgao/water"
+
 	"github.com/songgao/packets/ethernet"
+	"github.com/songgao/water"
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
 )
@@ -12,6 +13,7 @@ const (
 	ethHeaderSize = 18
 )
 
+// TUNPacketConn is a wrapper around water.Interface that implements ReadFrom and WriteTo
 type TUNPacketConn struct {
 	water.Interface
 }
@@ -24,6 +26,7 @@ func (ethernetAddr) Network() string {
 	return "eth"
 }
 
+// ReadFrom implements net.PacketConn.ReadFrom
 func (c *TUNPacketConn) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
 	n, err = c.Interface.Read(p)
 	if c.Interface.IsTAP() {
@@ -46,10 +49,10 @@ func (c *TUNPacketConn) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
 	return n, nil, err
 }
 
+// WriteTo implements net.PacketConn.ReadFrom
 func (c *TUNPacketConn) WriteTo(p []byte, addr net.Addr) (n int, err error) {
 	if c.Interface.IsTAP() {
 		// Not implemented
-		return c.Write(p)
 	} else {
 		// IPv4 dst rewrite
 		ip := net.ParseIP(addr.String())
