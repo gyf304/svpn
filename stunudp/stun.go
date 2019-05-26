@@ -1,4 +1,4 @@
-package svpn
+package stunudp
 
 import (
 	"fmt"
@@ -8,23 +8,34 @@ import (
 	"github.com/gortc/stun"
 )
 
-// STUNUDP is a udp connection, but LocalAddr is now a Public Internet Address
-type STUNUDP struct {
+// STUNUDPConn is a udp connection
+type STUNUDPConn struct {
 	*net.UDPConn
 	StunServerAddr    *net.UDPAddr
 	KeepAliveInterval time.Duration
 
 	tickerStop chan struct{}
-	cachedAddr *staticAddr
+	cachedAddr *net.UDPAddr
 }
 
 // PublicAddr returns STUN address
-func (c *STUNUDP) PublicAddr() net.Addr {
+func (c *STUNUDPConn) PublicAddr() net.Addr {
 	return c.cachedAddr
 }
 
+func ListenSTUNUDP(network string, laddr *net.UDPAddr, stunAddr *net.UDPAddr) (*STUNUDPConn, error) {
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{})
+	if err != nil {
+		return nil, err
+	}
+	return &STUNUDPConn{
+		UDPConn: conn,
+		StunServerAddr: stunAddr,
+	}, nil
+}
+
 // Start
-func (c *STUNUDP) Start() error {
+func (c *STUNUDPConn) Start() error {
 	// set up sender
 	if c.tickerStop != nil {
 		close(c.tickerStop)
@@ -59,14 +70,14 @@ func (c *STUNUDP) Start() error {
 }
 
 // Stop stops everything
-func (c *STUNUDP) Stop() error {
+func (c *STUNUDPConn) Stop() error {
 	if c.tickerStop != nil {
 		close(c.tickerStop)
 	}
 	return nil
 }
 
-func (c *STUNUDP) ReadFromUDP(b []byte) (n int, addr *net.UDPAddr, err error) {
+func (c *STUNUDPConn) ReadFromUDP(b []byte) (n int, addr *net.UDPAddr, err error) {
 	var tmpB []byte
 	if len(b) < 4096 {
 		tmpB = make([]byte, 4096)
@@ -85,7 +96,7 @@ func (c *STUNUDP) ReadFromUDP(b []byte) (n int, addr *net.UDPAddr, err error) {
 		xorAddr := stun.XORMappedAddress{}
 		err = xorAddr.GetFrom(&stunMessage)
 		if err == nil {
-			c.cachedAddr = &staticAddr{NetworkValue: "udp", StringValue: xorAddr.String()}
+			c.cachedAddr = &net.UDPAddr{IP: xorAddr.IP, Port: xorAddr.Port}
 		}
 	}
 	if len(tmpB) > 0 {
@@ -94,11 +105,11 @@ func (c *STUNUDP) ReadFromUDP(b []byte) (n int, addr *net.UDPAddr, err error) {
 	return n, addr, err
 }
 
-func (c *STUNUDP) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
+func (c *STUNUDPConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
 	return c.ReadFromUDP(b)
 }
 
-func (c *STUNUDP) Read(b []byte) (n int, err error) {
+func (c *STUNUDPConn) Read(b []byte) (n int, err error) {
 	n, _, err = c.ReadFrom(b)
 	return n, err
 }

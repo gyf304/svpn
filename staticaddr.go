@@ -32,7 +32,7 @@ func (addr *staticAddr) MarshalText() (text []byte, err error) {
 	return json.Marshal((*_staticAddr)(addr))
 }
 
-// UnmarshalText unmarshalls text from json
+// UnmarshalText unmarshals text from json
 func (addr *staticAddr) UnmarshalText(text []byte) error {
 	var xAddr _staticAddr
 	err := json.Unmarshal(text, &xAddr)

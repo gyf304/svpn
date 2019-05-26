@@ -49,7 +49,6 @@ func (mNAT *ManagedNAT) Start() error {
 		defer close(mNAT.readerClosed)
 		b := make([]byte, 65536)
 		for {
-			mNAT.SignalBus.SetReadDeadline(time.Now().Add(1 * time.Second))
 			n, err := mNAT.SignalBus.Read(b)
 			if err != nil {
 				if !mNAT.closing && os.IsTimeout(err) {
@@ -90,7 +89,6 @@ func (mNAT *ManagedNAT) Stop() error {
 		<-mNAT.readerClosed
 	}
 	pinnedPairs := mNAT.getMapping(false, true)
-	mNAT.SignalBus.SetWriteDeadline(time.Now().Add(1 * time.Second))
 	for _, pair := range pinnedPairs {
 		mNAT.SignalBus.Write([]byte(generateAddrPairCmd("DISAC", pair.Src, pair.Dst)))
 	}
@@ -100,7 +98,6 @@ func (mNAT *ManagedNAT) Stop() error {
 
 // Probe probes existing peers on network
 func (mNAT *ManagedNAT) Probe() error {
-	mNAT.SignalBus.SetWriteDeadline(time.Now().Add(1 * time.Second))
 	_, err := mNAT.SignalBus.Write([]byte("PROBE"))
 	return err
 }
@@ -176,7 +173,6 @@ func (mNAT *ManagedNAT) PinMapping(privateAddr net.Addr, publicAddr net.Addr) {
 	mNAT.addMapping(sPrivateAddr, sPublicAddr)
 	mNAT.privateToPublic[sPrivateAddr][sPublicAddr] = true
 	mNAT.publicToPrivate[sPublicAddr][sPrivateAddr] = true
-	mNAT.SignalBus.SetWriteDeadline(time.Now().Add(1 * time.Second))
 	mNAT.SignalBus.Write([]byte(generateAddrPairCmd("ASSOC", &sPrivateAddr, &sPublicAddr)))
 }
 
@@ -201,7 +197,7 @@ func (mNAT *ManagedNAT) UnpinMapping(privateAddr net.Addr, publicAddr net.Addr) 
 	mNAT.dropMapping(sPrivateAddr, sPublicAddr)
 }
 
-func (mNAT *ManagedNAT) PublicAddrToPrivateAddrs(addr net.Addr) []net.Addr {
+func (mNAT *ManagedNAT) TranslateInbound(addr net.Addr) []net.Addr {
 	if mNAT.publicToPrivate != nil {
 		mNAT.mapLock.RLock()
 		defer mNAT.mapLock.RUnlock()
@@ -215,7 +211,7 @@ func (mNAT *ManagedNAT) PublicAddrToPrivateAddrs(addr net.Addr) []net.Addr {
 	return nil
 }
 
-func (mNAT *ManagedNAT) PrivateAddrToPublicAddrs(addr net.Addr) []net.Addr {
+func (mNAT *ManagedNAT) TranslateOutbound(addr net.Addr) []net.Addr {
 	if mNAT.privateToPublic != nil {
 		mNAT.mapLock.RLock()
 		defer mNAT.mapLock.RUnlock()
@@ -239,7 +235,6 @@ func (mNAT *ManagedNAT) handleCommand(cmd ...string) {
 		for privateAddr, publicAddrs := range mNAT.privateToPublic {
 			for publicAddr, pinned := range publicAddrs {
 				if pinned {
-					mNAT.SignalBus.SetWriteDeadline(time.Now().Add(1 * time.Second))
 					mNAT.SignalBus.Write([]byte(generateAddrPairCmd("ASSOC", &privateAddr, &publicAddr)))
 				}
 			}

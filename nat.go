@@ -3,6 +3,7 @@ package svpn
 import (
 	"net"
 	"sync"
+	"fmt"
 )
 
 // NATEntry represents one entry in a NAT table
@@ -14,11 +15,11 @@ type NATEntry struct {
 
 // NAT is a many-to-many network address translator
 type NAT interface {
-	// PublicAddrToPrivateAddrs translate a net.Addr to a list of net.Addr
-	PublicAddrToPrivateAddrs(net.Addr) []net.Addr
+	// TranslateInbound translate a net.Addr to a list of net.Addr
+	TranslateInbound(net.Addr) []net.Addr
 
-	// PrivateAddrToPublicAddrs translate a net.Addr to a list of net.Addr
-	PrivateAddrToPublicAddrs(net.Addr) []net.Addr
+	// TranslateOutbound translate a net.Addr to a list of net.Addr
+	TranslateOutbound(net.Addr) []net.Addr
 }
 
 // NATPacketConn act as a router on top of a net.PacketConn
@@ -48,7 +49,7 @@ func (c *NATPacketConn) ReadFromNAT(p []byte) (n int, naddr *NATAddr, err error)
 	// do actual read if there's no pending packets
 	n, addr, err := c.PacketConn.ReadFrom(p)
 	// do address translation
-	privateAddrs := c.NAT.PublicAddrToPrivateAddrs(addr)
+	privateAddrs := c.NAT.TranslateInbound(addr)
 	if len(privateAddrs) == 0 {
 		return n, nil, err
 	}
@@ -58,6 +59,7 @@ func (c *NATPacketConn) ReadFromNAT(p []byte) (n int, naddr *NATAddr, err error)
 		c.pendingReadFromSrc = addr
 		c.pendingReadFromMutex.Unlock()
 	}
+	fmt.Println("Routing pkt from", naddr, "to", privateAddrs)
 	return n, &NATAddr{privateAddrs[0], addr}, err
 }
 
@@ -68,10 +70,11 @@ func (c *NATPacketConn) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
 
 // WriteTo : See PacketConn.WriteTo, this never fails
 func (c *NATPacketConn) WriteTo(p []byte, addr net.Addr) (n int, err error) {
-	publicAddrs := c.NAT.PrivateAddrToPublicAddrs(addr)
+	publicAddrs := c.NAT.TranslateOutbound(addr)
 	for _, publicAddr := range publicAddrs {
 		c.PacketConn.WriteTo(p, publicAddr)
 	}
+	// fmt.Println("Routing Pkt from", addr, "to", publicAddrs)
 	return len(p), nil
 }
 
